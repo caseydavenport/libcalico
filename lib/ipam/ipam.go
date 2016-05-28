@@ -48,22 +48,20 @@ func (c IPAMClient) AutoAssign(
 	log.Printf("Assigning for host: %s", hostname)
 
 	// Assign addresses.
-	v4list, _ := c.autoAssignV4(num4, handle, attributes, v4pool, hostname)
-	//	v6list := rw.autoAssignV6()
-	v6list := []net.IP{}
+	v4list, _ := c.autoAssign(num4, handle, attributes, v4pool, IPv4, hostname)
+	v6list, _ := c.autoAssign(num6, handle, attributes, v6pool, IPv6, hostname)
 
 	return v4list, v6list, nil
 }
 
-func (c IPAMClient) autoAssignV4(
-	num int64, handle string, attrs map[string]string, pool *net.IPNet, host string) ([]net.IP, error) {
+func (c IPAMClient) autoAssign(num int64, handle string, attrs map[string]string, pool *net.IPNet, version IPVersion, host string) ([]net.IP, error) {
 
 	// Start by trying to assign from one of the host-affine blocks.  We
 	// always do strict checking at this stage, so it doesn't matter whether
 	// globally we have strict_affinity or not.
 	log.Printf("Looking for addresses in current affine blocks for host %s", host)
-	affBlocks, _ := c.BlockReaderWriter.getAffineBlocks(host, 4, pool)
-	log.Printf("Found %d affine IPv4 blocks", len(affBlocks))
+	affBlocks, _ := c.BlockReaderWriter.getAffineBlocks(host, version, pool)
+	log.Printf("Found %d affine IPv%d blocks", len(affBlocks), version.Number)
 	ips := []net.IP{}
 	for int64(len(ips)) < num {
 		if len(affBlocks) == 0 {
@@ -86,13 +84,11 @@ func (c IPAMClient) autoAssignV4(
 	if config.AutoAllocateBlocks == true {
 		rem := num - int64(len(ips))
 		log.Printf("Need to allocate %d more addresses", rem)
-		// TODO: Don't use hard-coded pool.
-		_, p, _ := net.ParseCIDR("192.168.0.0/16")
 		// TODO: Limit number of retries.
 		retries := RETRIES
 		for rem > 0 {
 			// Claim a new block.
-			b, err := c.BlockReaderWriter.ClaimNewAffineBlock(host, 4, p, config)
+			b, err := c.BlockReaderWriter.ClaimNewAffineBlock(host, version, pool, config)
 			if err != nil {
 				log.Println("Error claiming new block:", err)
 				retries = retries - 1
@@ -177,8 +173,8 @@ func (c IPAMClient) assignFromExistingBlock(
 	return ips, nil
 }
 
-func (rw BlockReaderWriter) getAffineBlocks(host string, ipVersion int, pool *net.IPNet) ([]net.IPNet, error) {
-	key := fmt.Sprintf(IPAM_HOST_AFFINITY_PATH, host, ipVersion)
+func (rw BlockReaderWriter) getAffineBlocks(host string, ver IPVersion, pool *net.IPNet) ([]net.IPNet, error) {
+	key := fmt.Sprintf(IPAM_HOST_AFFINITY_PATH, host, ver.Number)
 	opts := client.GetOptions{Quorum: true, Recursive: true}
 	res, err := rw.etcd.Get(context.Background(), key, &opts)
 	if err != nil {
@@ -205,7 +201,7 @@ func (rw BlockReaderWriter) getAffineBlocks(host string, ipVersion int, pool *ne
 }
 
 func (rw BlockReaderWriter) ClaimNewAffineBlock(
-	host string, version int, pool *net.IPNet, config IPAMConfig) (*net.IPNet, error) {
+	host string, version IPVersion, pool *net.IPNet, config IPAMConfig) (*net.IPNet, error) {
 
 	// TODO: Validate the given pool to ensure it exists, default to all pools.
 	pools := []net.IPNet{*pool}
@@ -213,7 +209,7 @@ func (rw BlockReaderWriter) ClaimNewAffineBlock(
 	// Iterate through pools to find a new block.
 	log.Println("Claiming a new affine block for host", host)
 	for _, pool := range pools {
-		for _, subnet := range Subnets(pool, BLOCK_PREFIX_LEN_4) {
+		for _, subnet := range Blocks(pool) {
 			// Check if a block already exists for this subnet.
 			key := blockDatastorePath(subnet)
 			_, err := rw.etcd.Get(context.Background(), key, nil)
@@ -295,16 +291,19 @@ func (rw BlockReaderWriter) CompareAndSwapBlock(b AllocationBlock) error {
 	return nil
 }
 
-func Subnets(network net.IPNet, prefixLength int) []net.IPNet {
+// Return the list of block CIDRs which fall within
+// the given pool.
+func Blocks(pool net.IPNet) []net.IPNet {
+	// Determine the IP type to use.
+	ipVersion := GetIPVersion(pool.IP)
 	nets := []net.IPNet{}
-	ip := network.IP
-	size := int64(math.Exp2(float64(32 - prefixLength)))
-	mask := net.CIDRMask(prefixLength, 32) // TODO: Support IPv6
-	for network.Contains(ip) {
-		nets = append(nets, net.IPNet{ip, mask})
+	ip := pool.IP
+	size := int64(math.Exp2(float64(ipVersion.TotalBits - ipVersion.BlockPrefixLength)))
+	for pool.Contains(ip) {
+		nets = append(nets, net.IPNet{ip, ipVersion.BlockPrefixMask})
 		ip = IncrementIP(ip, size)
 	}
-	log.Printf("%s has %d subnets of size %d", network, len(nets), size)
+	log.Printf("%s has %d subnets of size %d", pool, len(nets), size)
 	return nets
 }
 
@@ -324,14 +323,14 @@ func (rw BlockReaderWriter) ReadBlock(blockCidr net.IPNet) (*AllocationBlock, er
 }
 
 func blockDatastorePath(blockCidr net.IPNet) string {
-	// TODO: Support v6
-	path := fmt.Sprintf(IPAM_BLOCK_PATH, 4)
+	version := GetIPVersion(blockCidr.IP)
+	path := fmt.Sprintf(IPAM_BLOCK_PATH, version.Number)
 	return path + strings.Replace(blockCidr.String(), "/", "-", 1)
 }
 
 func blockHostAffinityPath(blockCidr net.IPNet, host string) string {
-	// TODO: Support v6
-	path := fmt.Sprintf(IPAM_HOST_AFFINITY_PATH, host, 4)
+	version := GetIPVersion(blockCidr.IP)
+	path := fmt.Sprintf(IPAM_HOST_AFFINITY_PATH, host, version.Number)
 	return path + strings.Replace(blockCidr.String(), "/", "-", 1)
 }
 

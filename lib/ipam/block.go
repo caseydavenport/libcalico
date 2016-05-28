@@ -10,19 +10,29 @@ import (
 )
 
 const (
-	BLOCK_PREFIX_LEN_4 = 26
-	BLOCK_SIZE_BITS    = 6
-	BLOCK_SIZE         = 64 // 2**BLOCK_SIZE_BITS
-	CIDR               = "cidr"
-	AFFINITY           = "affinity"
-	HOST_AFFINITY_T    = "host:%s"
-	ALLOCATIONS        = "allocations"
-	UNALLOCATED        = "unallocated"
-	STRICT_AFFINITY    = "strict_affinity"
-	ATTRIBUTES         = "attributes"
-	ATTR_HANDLE_ID     = "handle_id"
-	ATTR_SECONDARY     = "secondary"
+	BLOCK_SIZE = 64
 )
+
+type IPVersion struct {
+	Number            int64
+	TotalBits         int64
+	BlockPrefixLength int64
+	BlockPrefixMask   net.IPMask
+}
+
+var IPv4 IPVersion = IPVersion{
+	Number:            4,
+	TotalBits:         32,
+	BlockPrefixLength: 26,
+	BlockPrefixMask:   net.CIDRMask(26, 32),
+}
+
+var IPv6 IPVersion = IPVersion{
+	Number:            6,
+	TotalBits:         128,
+	BlockPrefixLength: 122,
+	BlockPrefixMask:   net.CIDRMask(122, 128),
+}
 
 type AllocationBlock struct {
 	Cidr           net.IPNet             `json:"-"`
@@ -56,7 +66,7 @@ func NewBlock(cidr net.IPNet) AllocationBlock {
 }
 
 func IPToInt(ip net.IP) int64 {
-	return int64(binary.BigEndian.Uint32(ip.To4()))
+	return int64(binary.BigEndian.Uint32(ip.To16()))
 }
 
 func IntToIP(ipInt int64) net.IP {
@@ -268,10 +278,23 @@ func (b *AllocationBlock) FindOrAddAttribute(handleId string, attrs map[string]s
 }
 
 func GetBlockCIDRForAddress(addr net.IP) net.IPNet {
-	// TODO: Support v6
-	mask := net.CIDRMask(26, 32)
+	var mask net.IPMask
+	if addr.To4() == nil {
+		// This is an IPv6 address.
+		mask = IPv6.BlockPrefixMask
+	} else {
+		// This is an IPv4 address.
+		mask = IPv4.BlockPrefixMask
+	}
 	masked := addr.Mask(mask)
 	return net.IPNet{IP: masked, Mask: mask}
+}
+
+func GetIPVersion(ip net.IP) IPVersion {
+	if ip.To4() == nil {
+		return IPv6
+	}
+	return IPv4
 }
 
 func IntInSlice(searchInt int64, slice []int64) bool {
