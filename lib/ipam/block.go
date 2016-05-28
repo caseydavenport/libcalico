@@ -1,10 +1,10 @@
 package ipam
 
 import (
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"log"
+	"math/big"
 	"net"
 	"reflect"
 )
@@ -65,29 +65,31 @@ func NewBlock(cidr net.IPNet) AllocationBlock {
 	return b
 }
 
-func IPToInt(ip net.IP) int64 {
-	return int64(binary.BigEndian.Uint32(ip.To16()))
+func IPToInt(ip net.IP) *big.Int {
+	return big.NewInt(0).SetBytes(ip.To16())
 }
 
-func IntToIP(ipInt int64) net.IP {
-	ipByte := make([]byte, 4)
-	binary.BigEndian.PutUint32(ipByte, uint32(ipInt))
-	ip := net.IP(ipByte)
+func IntToIP(ipInt *big.Int) net.IP {
+	ip := net.IP(ipInt.Bytes())
 	return ip
 }
 
 func IncrementIP(ip net.IP, increment int64) net.IP {
-	return IntToIP(IPToInt(ip) + increment)
+	sum := big.NewInt(0).Add(IPToInt(ip), big.NewInt(increment))
+	return IntToIP(sum)
 }
 
 func IPToOrdinal(ip net.IP, b AllocationBlock) int64 {
 	ip_int := IPToInt(ip)
 	base_int := IPToInt(b.Cidr.IP)
-	return ip_int - base_int
+	ord := big.NewInt(0).Sub(ip_int, base_int).Int64()
+	// TODO: Check if this is a valid ordinal!
+	return ord
 }
 
 func OrdinalToIP(ord int64, b AllocationBlock) net.IP {
-	return IntToIP(IPToInt(b.Cidr.IP) + ord)
+	sum := big.NewInt(0).Add(IPToInt(b.Cidr.IP), big.NewInt(ord))
+	return IntToIP(sum)
 }
 
 func (b *AllocationBlock) AutoAssign(
