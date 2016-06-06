@@ -48,10 +48,17 @@ func (c IPAMClient) AutoAssign(
 	log.Printf("Assigning for host: %s", hostname)
 
 	// Assign addresses.
-	v4list, _ := c.autoAssign(num4, handle, attributes, v4pool, IPv4, hostname)
-	v6list, _ := c.autoAssign(num6, handle, attributes, v6pool, IPv6, hostname)
+	var err error
+	var v4list, v6list []net.IP
+	v4list, err = c.autoAssign(num4, handle, attributes, v4pool, IPv4, hostname)
+	if err != nil {
+		log.Printf("Error assigning IPV4 addresses: %s", err)
+	} else {
+		// If no err assigning V4, try to assign any V6.
+		v6list, err = c.autoAssign(num6, handle, attributes, v6pool, IPv6, hostname)
+	}
 
-	return v4list, v6list, nil
+	return v4list, v6list, err
 }
 
 func (c IPAMClient) autoAssign(num int64, handle string, attrs map[string]string, pool *net.IPNet, version IPVersion, host string) ([]net.IP, error) {
@@ -60,7 +67,10 @@ func (c IPAMClient) autoAssign(num int64, handle string, attrs map[string]string
 	// always do strict checking at this stage, so it doesn't matter whether
 	// globally we have strict_affinity or not.
 	log.Printf("Looking for addresses in current affine blocks for host %s", host)
-	affBlocks, _ := c.BlockReaderWriter.getAffineBlocks(host, version, pool)
+	affBlocks, err := c.BlockReaderWriter.getAffineBlocks(host, version, pool)
+	if err != nil {
+		return nil, err
+	}
 	log.Printf("Found %d affine IPv%d blocks", len(affBlocks), version.Number)
 	ips := []net.IP{}
 	for int64(len(ips)) < num {

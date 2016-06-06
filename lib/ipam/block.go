@@ -66,7 +66,11 @@ func NewBlock(cidr net.IPNet) AllocationBlock {
 }
 
 func IPToInt(ip net.IP) *big.Int {
-	return big.NewInt(0).SetBytes(ip.To16())
+	if ip.To4() != nil {
+		return big.NewInt(0).SetBytes(ip.To4())
+	} else {
+		return big.NewInt(0).SetBytes(ip.To16())
+	}
 }
 
 func IntToIP(ipInt *big.Int) net.IP {
