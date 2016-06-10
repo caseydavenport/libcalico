@@ -45,8 +45,8 @@ type AllocationBlock struct {
 }
 
 type AllocationAttribute struct {
-	AttrPrimary   string
-	AttrSecondary map[string]string
+	AttrPrimary   string            `json:"handle_id"`
+	AttrSecondary map[string]string `json:"secondary"`
 }
 
 func NewBlock(cidr net.IPNet) AllocationBlock {
@@ -166,7 +166,7 @@ func (b AllocationBlock) Empty() bool {
 func (b *AllocationBlock) Release(addresses []net.IP) ([]net.IP, map[string]int64, error) {
 	// Store return values.
 	unallocated := []net.IP{}
-	count_by_handle := map[string]int64{}
+	countByHandle := map[string]int64{}
 
 	// Used internally.
 	var ordinals []int64
@@ -189,6 +189,13 @@ func (b *AllocationBlock) Release(addresses []net.IP) ([]net.IP, map[string]int6
 		ordinals = append(ordinals, ordinal)
 
 		// TODO: Handle cleaning up of attributes.
+		handleId := b.Attributes[*attrIdx].AttrPrimary
+		handleCount := int64(0)
+		if count, ok := countByHandle[handleId]; !ok {
+			handleCount = count
+		}
+		handleCount += 1
+		countByHandle[handleId] = handleCount
 	}
 
 	// Release requested addresses.
@@ -196,7 +203,7 @@ func (b *AllocationBlock) Release(addresses []net.IP) ([]net.IP, map[string]int6
 		b.Allocations[ordinal] = nil
 		b.Unallocated = append(b.Unallocated, ordinal)
 	}
-	return unallocated, count_by_handle, nil
+	return unallocated, countByHandle, nil
 }
 
 func (b AllocationBlock) attributeIndexesByHandle(handleId string) []int64 {
