@@ -97,7 +97,7 @@ func OrdinalToIP(ord int64, b AllocationBlock) net.IP {
 }
 
 func (b *AllocationBlock) AutoAssign(
-	num int64, handleId string, host string, attrs map[string]string, affinityCheck bool) ([]net.IP, error) {
+	num int64, handleID string, host string, attrs map[string]string, affinityCheck bool) ([]net.IP, error) {
 
 	// Determine if we need to check for affinity.
 	checkAffinity := b.StrictAffinity || affinityCheck
@@ -117,14 +117,14 @@ func (b *AllocationBlock) AutoAssign(
 	// Create slice of IPs and perform the allocations.
 	ips := []net.IP{}
 	for _, o := range ordinals {
-		attrIndex := b.FindOrAddAttribute(handleId, attrs)
+		attrIndex := b.FindOrAddAttribute(handleID, attrs)
 		b.Allocations[o] = &attrIndex
 		ips = append(ips, IncrementIP(b.Cidr.IP, o))
 	}
 	return ips, nil
 }
 
-func (b *AllocationBlock) Assign(address net.IP, handleId string, attrs map[string]string, host string) error {
+func (b *AllocationBlock) Assign(address net.IP, handleID string, attrs map[string]string, host string) error {
 	if b.StrictAffinity && host != b.HostAffinity {
 		// Affinity check is enabled but the host does not match - error.
 		return errors.New("Block host affinity does not match")
@@ -142,7 +142,7 @@ func (b *AllocationBlock) Assign(address net.IP, handleId string, attrs map[stri
 	}
 
 	// Set up attributes.
-	attrIndex := b.FindOrAddAttribute(handleId, attrs)
+	attrIndex := b.FindOrAddAttribute(handleID, attrs)
 	b.Allocations[ordinal] = &attrIndex
 
 	// Remove from unallocated.
@@ -170,6 +170,8 @@ func (b *AllocationBlock) Release(addresses []net.IP) ([]net.IP, map[string]int6
 
 	// Used internally.
 	var ordinals []int64
+	delRefCounts := map[int64]int{}
+	attrsToDelete := []int64{}
 
 	// Determine the ordinals that need to be released and the
 	// attributes that need to be cleaned up.
@@ -188,14 +190,35 @@ func (b *AllocationBlock) Release(addresses []net.IP) ([]net.IP, map[string]int6
 		}
 		ordinals = append(ordinals, ordinal)
 
-		// TODO: Handle cleaning up of attributes.
-		handleId := b.Attributes[*attrIdx].AttrPrimary
+		// Increment referece counting for attributes.
+		cnt := 1
+		if cur, exists := delRefCounts[*attrIdx]; exists {
+			cnt = cur + 1
+		}
+		delRefCounts[*attrIdx] = cnt
+
+		// Increment count of addresses by handle.
+		handleID := b.Attributes[*attrIdx].AttrPrimary
 		handleCount := int64(0)
-		if count, ok := countByHandle[handleId]; !ok {
+		if count, ok := countByHandle[handleID]; !ok {
 			handleCount = count
 		}
 		handleCount += 1
-		countByHandle[handleId] = handleCount
+		countByHandle[handleID] = handleCount
+	}
+
+	// Handle cleaning up of attributes.  We do this by
+	// reference counting.  If we're deleting the last reference to
+	// a given attribute, then it needs to be cleaned up.
+	refCounts := b.attributeRefCounts()
+	for idx, refs := range delRefCounts {
+		if refCounts[idx] == refs {
+			attrsToDelete = append(attrsToDelete, idx)
+		}
+	}
+	if len(attrsToDelete) != 0 {
+		log.Printf("Deleting attributes: %s", attrsToDelete)
+		b.deleteAttributes(attrsToDelete, ordinals)
 	}
 
 	// Release requested addresses.
@@ -206,22 +229,67 @@ func (b *AllocationBlock) Release(addresses []net.IP) ([]net.IP, map[string]int6
 	return unallocated, countByHandle, nil
 }
 
-func (b AllocationBlock) attributeIndexesByHandle(handleId string) []int64 {
+func (b *AllocationBlock) deleteAttributes(delIndexes, ordinals []int64) {
+	newIndexes := make([]*int64, len(b.Attributes))
+	newAttrs := []AllocationAttribute{}
+	y := int64(0) // Next free slot in the new attributes list.
+	for x := range b.Attributes {
+		if !IntInSlice(int64(x), delIndexes) {
+			log.Printf("%d in %s", x, delIndexes)
+			// Attribute at x is not being deleted.  Build a mapping
+			// of old attribute index (x) to new attribute index (y).
+			newIndex := y
+			newIndexes[x] = &newIndex
+			y += 1
+			newAttrs = append(newAttrs, b.Attributes[x])
+		}
+	}
+	b.Attributes = newAttrs
+
+	// Update attribute indexes for all allocations in this block.
+	for i := 0; i < BLOCK_SIZE; i++ {
+		if b.Allocations[i] != nil {
+			// Get the new index that corresponds to the old index
+			// and update the allocation.
+			newIndex := newIndexes[*b.Allocations[i]]
+			b.Allocations[i] = newIndex
+		}
+	}
+}
+
+func (b AllocationBlock) attributeRefCounts() map[int64]int {
+	refCounts := map[int64]int{}
+	for _, a := range b.Allocations {
+		if a == nil {
+			continue
+		}
+
+		if count, ok := refCounts[*a]; !ok {
+			// No entry for given attribute index.
+			refCounts[*a] = 1
+		} else {
+			refCounts[*a] = count + 1
+		}
+	}
+	return refCounts
+}
+
+func (b AllocationBlock) attributeIndexesByHandle(handleID string) []int64 {
 	indexes := []int64{}
 	for i, attr := range b.Attributes {
-		if attr.AttrPrimary == handleId {
+		if attr.AttrPrimary == handleID {
 			indexes = append(indexes, int64(i))
 		}
 	}
 	return indexes
 }
 
-func (b *AllocationBlock) ReleaseByHandle(handleId string) int64 {
-	attrIndexes := b.attributeIndexesByHandle(handleId)
+func (b *AllocationBlock) ReleaseByHandle(handleID string) int64 {
+	attrIndexes := b.attributeIndexesByHandle(handleID)
 	log.Println("Attribute indexes to release:", attrIndexes)
 	if len(attrIndexes) == 0 {
 		// Nothing to release.
-		log.Println("No addresses assigned to handle", handleId)
+		log.Println("No addresses assigned to handle", handleID)
 		return 0
 	}
 
@@ -236,7 +304,8 @@ func (b *AllocationBlock) ReleaseByHandle(handleId string) int64 {
 		}
 	}
 
-	// TODO: Clean and reorder attributes.
+	// Clean and reorder attributes.
+	b.deleteAttributes(attrIndexes, ordinals)
 
 	// Release the addresses.
 	for _, o := range ordinals {
@@ -246,9 +315,9 @@ func (b *AllocationBlock) ReleaseByHandle(handleId string) int64 {
 	return int64(len(ordinals))
 }
 
-func (b AllocationBlock) IPsByHandle(handleId string) []net.IP {
+func (b AllocationBlock) IPsByHandle(handleID string) []net.IP {
 	ips := []net.IP{}
-	attrIndexes := b.attributeIndexesByHandle(handleId)
+	attrIndexes := b.attributeIndexesByHandle(handleID)
 	var o int64
 	for o = 0; o < BLOCK_SIZE; o++ {
 		if IntInSlice(*b.Allocations[o], attrIndexes) {
@@ -274,8 +343,8 @@ func (b AllocationBlock) AttributesForIP(ip net.IP) (*AllocationAttribute, error
 	return &b.Attributes[*attrIndex], nil
 }
 
-func (b *AllocationBlock) FindOrAddAttribute(handleId string, attrs map[string]string) int64 {
-	attr := AllocationAttribute{handleId, attrs}
+func (b *AllocationBlock) FindOrAddAttribute(handleID string, attrs map[string]string) int64 {
+	attr := AllocationAttribute{handleID, attrs}
 	for idx, existing := range b.Attributes {
 		if reflect.DeepEqual(attr, existing) {
 			log.Println("Attribute already exists")

@@ -69,7 +69,7 @@ func (c IPAMClient) AutoAssign(args AssignmentArgs) ([]net.IP, []net.IP, error) 
 	return v4list, v6list, err
 }
 
-func (c IPAMClient) autoAssign(num int64, handleId string, attrs map[string]string, pool *net.IPNet, version IPVersion, host string) ([]net.IP, error) {
+func (c IPAMClient) autoAssign(num int64, handleID string, attrs map[string]string, pool *net.IPNet, version IPVersion, host string) ([]net.IP, error) {
 
 	// Start by trying to assign from one of the host-affine blocks.  We
 	// always do strict checking at this stage, so it doesn't matter whether
@@ -88,7 +88,7 @@ func (c IPAMClient) autoAssign(num int64, handleId string, attrs map[string]stri
 		}
 		cidr := affBlocks[0]
 		affBlocks = affBlocks[1:]
-		ips, _ = c.assignFromExistingBlock(cidr, num, handleId, attrs, host, nil)
+		ips, _ = c.assignFromExistingBlock(cidr, num, handleID, attrs, host, nil)
 		log.Println("Block provided addresses:", ips)
 	}
 
@@ -116,7 +116,7 @@ func (c IPAMClient) autoAssign(num int64, handleId string, attrs map[string]stri
 			} else {
 				// Claim successful.  Assign addresses from the new block.
 				log.Println("Claimed new block - assigning addresses")
-				newIPs, err := c.assignFromExistingBlock(*b, rem, handleId, attrs, host, &config.StrictAffinity)
+				newIPs, err := c.assignFromExistingBlock(*b, rem, handleID, attrs, host, &config.StrictAffinity)
 				if err != nil {
 					log.Println("Error assigning IPs:", err)
 					break
@@ -149,7 +149,7 @@ func (c IPAMClient) autoAssign(num int64, handleId string, attrs map[string]stri
 	return ips, nil
 }
 
-func (c IPAMClient) AssignIP(addr net.IP, handleId string, attrs map[string]string, host *string) error {
+func (c IPAMClient) AssignIP(addr net.IP, handleID string, attrs map[string]string, host *string) error {
 	hostname := decideHostname(host)
 	log.Printf("Assigning IP %s to host: %s", addr, hostname)
 
@@ -175,19 +175,19 @@ func (c IPAMClient) AssignIP(addr net.IP, handleId string, attrs map[string]stri
 			continue
 		}
 		log.Printf("IP %s is in block %s", addr, block.Cidr)
-		err = block.Assign(addr, handleId, attrs, hostname)
+		err = block.Assign(addr, handleID, attrs, hostname)
 		if err != nil {
 			log.Printf("Failed to assign address %s: %s", addr, err)
 			return err
 		}
 
 		// Increment handle.
-		c.incrementHandle(handleId, blockCidr, int64(1))
+		c.incrementHandle(handleID, blockCidr, int64(1))
 
 		// Update the block.
 		err = c.BlockReaderWriter.CompareAndSwapBlock(*block)
 		if err != nil {
-			c.decrementHandle(handleId, blockCidr, int64(1))
+			c.decrementHandle(handleID, blockCidr, int64(1))
 			log.Println("CAS failed on block %s", block.Cidr)
 			return err
 		}
@@ -250,8 +250,8 @@ func (c IPAMClient) releaseIPsFromBlock(ips []net.IP, blockCidr net.IPNet) ([]ne
 
 		// Success - decrement handles.
 		log.Println("Decrementing handles:", handles)
-		for handleId, amount := range handles {
-			c.decrementHandle(handleId, blockCidr, amount)
+		for handleID, amount := range handles {
+			c.decrementHandle(handleID, blockCidr, amount)
 		}
 		return unallocated, nil
 	}
@@ -259,7 +259,7 @@ func (c IPAMClient) releaseIPsFromBlock(ips []net.IP, blockCidr net.IPNet) ([]ne
 }
 
 func (c IPAMClient) assignFromExistingBlock(
-	blockCidr net.IPNet, num int64, handleId string, attrs map[string]string, host string, affCheck *bool) ([]net.IP, error) {
+	blockCidr net.IPNet, num int64, handleID string, attrs map[string]string, host string, affCheck *bool) ([]net.IP, error) {
 	// Limit number of retries.
 	var ips []net.IP
 	for i := 0; i < RETRIES; i++ {
@@ -269,7 +269,7 @@ func (c IPAMClient) assignFromExistingBlock(
 			return nil, err
 		}
 		log.Println("Got block:", b)
-		ips, err = b.AutoAssign(num, handleId, host, attrs, true)
+		ips, err = b.AutoAssign(num, handleID, host, attrs, true)
 		if err != nil {
 			log.Println("Error in auto assign:", err)
 			return nil, err
@@ -280,12 +280,12 @@ func (c IPAMClient) assignFromExistingBlock(
 		}
 
 		// Increment handle count.
-		c.incrementHandle(handleId, blockCidr, num)
+		c.incrementHandle(handleID, blockCidr, num)
 
 		// Update the block using CAS.
 		err = c.BlockReaderWriter.CompareAndSwapBlock(*b)
 		if err != nil {
-			c.decrementHandle(handleId, blockCidr, num)
+			c.decrementHandle(handleID, blockCidr, num)
 			log.Println("Error updating block - try again")
 			continue
 		}
@@ -294,8 +294,8 @@ func (c IPAMClient) assignFromExistingBlock(
 	return ips, nil
 }
 
-func (c IPAMClient) IPsByHandle(handleId string) ([]net.IP, error) {
-	handle, err := c.readHandle(handleId)
+func (c IPAMClient) IPsByHandle(handleID string) ([]net.IP, error) {
+	handle, err := c.readHandle(handleID)
 	if err != nil {
 		return nil, err
 	}
@@ -305,28 +305,29 @@ func (c IPAMClient) IPsByHandle(handleId string) ([]net.IP, error) {
 		_, blockCidr, _ := net.ParseCIDR(k)
 		b, err := c.BlockReaderWriter.ReadBlock(*blockCidr)
 		if err != nil {
-			log.Printf("Couldn't read block %s referenced by handle %s", blockCidr, handleId)
+			log.Printf("Couldn't read block %s referenced by handle %s", blockCidr, handleID)
 			continue
 		}
-		assignments = append(assignments, b.IPsByHandle(handleId)...)
+		assignments = append(assignments, b.IPsByHandle(handleID)...)
 	}
 	return assignments, nil
 }
 
-func (c IPAMClient) ReleaseByHandle(handleId string) error {
-	handle, err := c.readHandle(handleId)
+func (c IPAMClient) ReleaseByHandle(handleID string) error {
+	log.Printf("Releasing all IPs with handle '%s'", handleID)
+	handle, err := c.readHandle(handleID)
 	if err != nil {
 		return err
 	}
 
 	for blockStr, _ := range handle.Block {
 		_, blockCidr, _ := net.ParseCIDR(blockStr)
-		err = c.releaseByHandle(handleId, *blockCidr)
+		err = c.releaseByHandle(handleID, *blockCidr)
 	}
 	return nil
 }
 
-func (c IPAMClient) releaseByHandle(handleId string, blockCidr net.IPNet) error {
+func (c IPAMClient) releaseByHandle(handleID string, blockCidr net.IPNet) error {
 	for i := 0; i < RETRIES; i++ {
 		block, err := c.BlockReaderWriter.ReadBlock(blockCidr)
 		if err != nil {
@@ -336,7 +337,7 @@ func (c IPAMClient) releaseByHandle(handleId string, blockCidr net.IPNet) error 
 			// overestimating the number of assigned addresses.
 			return nil
 		}
-		num := block.ReleaseByHandle(handleId)
+		num := block.ReleaseByHandle(handleID)
 		if num == 0 {
 			// Block has no addresses with this handle, so
 			// all addresses are already unallocated.
@@ -346,17 +347,19 @@ func (c IPAMClient) releaseByHandle(handleId string, blockCidr net.IPNet) error 
 		err = c.BlockReaderWriter.CompareAndSwapBlock(*block)
 		if err != nil {
 			// Failed to update - retry.
+			log.Printf("CAS error for block, retry #%d: %s", i, err)
 			continue
 		}
 
 		// TODO: Deal with the "None" handle...
-		c.decrementHandle(handleId, blockCidr, num)
+		c.decrementHandle(handleID, blockCidr, num)
+		return nil
 	}
 	return errors.New("Hit max retries")
 }
 
-func (c IPAMClient) readHandle(handleId string) (*AllocationHandle, error) {
-	key := IPAM_HANDLE_PATH + handleId
+func (c IPAMClient) readHandle(handleID string) (*AllocationHandle, error) {
+	key := IPAM_HANDLE_PATH + handleID
 	opts := client.GetOptions{Quorum: true}
 	resp, err := c.BlockReaderWriter.etcd.Get(context.Background(), key, &opts)
 	if err != nil {
@@ -369,15 +372,15 @@ func (c IPAMClient) readHandle(handleId string) (*AllocationHandle, error) {
 	return &h, nil
 }
 
-func (c IPAMClient) incrementHandle(handleId string, blockCidr net.IPNet, num int64) error {
+func (c IPAMClient) incrementHandle(handleID string, blockCidr net.IPNet, num int64) error {
 	for i := 0; i < RETRIES; i++ {
-		handle, err := c.readHandle(handleId)
+		handle, err := c.readHandle(handleID)
 		if err != nil {
 			// TODO: Check error type.
 			// Handle doesn't exist - create it.
-			log.Println("Creating new handle:", handleId)
+			log.Println("Creating new handle:", handleID)
 			handle = &AllocationHandle{
-				HandleId: handleId,
+				HandleId: handleID,
 				Block:    map[string]int64{},
 			}
 		}
@@ -394,9 +397,9 @@ func (c IPAMClient) incrementHandle(handleId string, blockCidr net.IPNet, num in
 
 }
 
-func (c IPAMClient) decrementHandle(handleId string, blockCidr net.IPNet, num int64) error {
+func (c IPAMClient) decrementHandle(handleID string, blockCidr net.IPNet, num int64) error {
 	for i := 0; i < RETRIES; i++ {
-		handle, err := c.readHandle(handleId)
+		handle, err := c.readHandle(handleID)
 		if err != nil {
 			log.Fatal("Can't decrement block because it doesn't exist")
 		}
@@ -411,7 +414,7 @@ func (c IPAMClient) decrementHandle(handleId string, blockCidr net.IPNet, num in
 		if err != nil {
 			continue
 		}
-		log.Printf("Decremented handle '%s' by %d", handleId, num)
+		log.Printf("Decremented handle '%s' by %d", handleID, num)
 		return nil
 	}
 	return errors.New("Max retries hit")
@@ -451,6 +454,16 @@ func (c IPAMClient) compareAndSwapHandle(h AllocationHandle) error {
 	}
 
 	return nil
+}
+
+func (c IPAMClient) GetAssignmentAttributes(addr net.IP) (*AllocationAttribute, error) {
+	blockCidr := GetBlockCIDRForAddress(addr)
+	block, err := c.BlockReaderWriter.ReadBlock(blockCidr)
+	if err != nil {
+		log.Printf("Error reading block %s: %s", blockCidr, err)
+		return nil, errors.New(fmt.Sprintf("%s is not assigned", addr))
+	}
+	return block.AttributesForIP(addr)
 }
 
 func (rw BlockReaderWriter) getAffineBlocks(host string, ver IPVersion, pool *net.IPNet) ([]net.IPNet, error) {
@@ -595,7 +608,7 @@ func (rw BlockReaderWriter) ReadBlock(blockCidr net.IPNet) (*AllocationBlock, er
 		log.Println("Error reading IPAM block:", err)
 		return nil, err
 	}
-	log.Println("Response from etcd:", resp)
+	// log.Println("Response from etcd:", resp)
 	b := NewBlock(blockCidr)
 	json.Unmarshal([]byte(resp.Node.Value), &b)
 	b.DbResult = resp.Node.Value
