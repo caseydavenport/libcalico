@@ -14,9 +14,9 @@ const (
 )
 
 type IPVersion struct {
-	Number            int64
-	TotalBits         int64
-	BlockPrefixLength int64
+	Number            int
+	TotalBits         int
+	BlockPrefixLength int
 	BlockPrefixMask   net.IPMask
 }
 
@@ -37,7 +37,7 @@ var IPv6 IPVersion = IPVersion{
 type AllocationBlock struct {
 	Cidr           net.IPNet             `json:"-"`
 	DbResult       string                `json:"-"`
-	HostAffinity   string                `json:"hostAffinity"`
+	HostAffinity   *string               `json:"hostAffinity"`
 	StrictAffinity bool                  `json:"strictAffinity"`
 	Allocations    []*int64              `json:"allocations"`
 	Unallocated    []int64               `json:"unallocated"`
@@ -53,7 +53,6 @@ func NewBlock(cidr net.IPNet) AllocationBlock {
 	b := AllocationBlock{}
 	b.Allocations = make([]*int64, BLOCK_SIZE)
 	b.Unallocated = make([]int64, BLOCK_SIZE)
-	b.HostAffinity = ""
 	b.StrictAffinity = false
 	b.Cidr = cidr
 
@@ -65,43 +64,12 @@ func NewBlock(cidr net.IPNet) AllocationBlock {
 	return b
 }
 
-func IPToInt(ip net.IP) *big.Int {
-	if ip.To4() != nil {
-		return big.NewInt(0).SetBytes(ip.To4())
-	} else {
-		return big.NewInt(0).SetBytes(ip.To16())
-	}
-}
-
-func IntToIP(ipInt *big.Int) net.IP {
-	ip := net.IP(ipInt.Bytes())
-	return ip
-}
-
-func IncrementIP(ip net.IP, increment int64) net.IP {
-	sum := big.NewInt(0).Add(IPToInt(ip), big.NewInt(increment))
-	return IntToIP(sum)
-}
-
-func IPToOrdinal(ip net.IP, b AllocationBlock) int64 {
-	ip_int := IPToInt(ip)
-	base_int := IPToInt(b.Cidr.IP)
-	ord := big.NewInt(0).Sub(ip_int, base_int).Int64()
-	// TODO: Check if this is a valid ordinal!
-	return ord
-}
-
-func OrdinalToIP(ord int64, b AllocationBlock) net.IP {
-	sum := big.NewInt(0).Add(IPToInt(b.Cidr.IP), big.NewInt(ord))
-	return IntToIP(sum)
-}
-
 func (b *AllocationBlock) AutoAssign(
 	num int64, handleID *string, host string, attrs map[string]string, affinityCheck bool) ([]net.IP, error) {
 
 	// Determine if we need to check for affinity.
 	checkAffinity := b.StrictAffinity || affinityCheck
-	if checkAffinity && host != b.HostAffinity {
+	if checkAffinity && b.HostAffinity != nil && host != *b.HostAffinity {
 		// Affinity check is enabled but the host does not match - error.
 		s := fmt.Sprintf("Block affinity (%s) does not match provided (%s)", b.HostAffinity, host)
 		return nil, errors.New(s)
@@ -125,7 +93,7 @@ func (b *AllocationBlock) AutoAssign(
 }
 
 func (b *AllocationBlock) Assign(address net.IP, handleID *string, attrs map[string]string, host string) error {
-	if b.StrictAffinity && host != b.HostAffinity {
+	if b.StrictAffinity && b.HostAffinity != nil && host != *b.HostAffinity {
 		// Affinity check is enabled but the host does not match - error.
 		return errors.New("Block host affinity does not match")
 	}
@@ -383,6 +351,13 @@ func GetIPVersion(ip net.IP) IPVersion {
 	return IPv4
 }
 
+func ValidateBlockSize(blockCidr net.IPNet) bool {
+	ones, bits := blockCidr.Mask.Size()
+	prefixLength := bits - ones
+	ipVersion := GetIPVersion(blockCidr.IP)
+	return prefixLength > ipVersion.BlockPrefixLength
+}
+
 func IntInSlice(searchInt int64, slice []int64) bool {
 	for _, v := range slice {
 		if v == searchInt {
@@ -390,4 +365,38 @@ func IntInSlice(searchInt int64, slice []int64) bool {
 		}
 	}
 	return false
+}
+
+func IPToInt(ip net.IP) *big.Int {
+	if ip.To4() != nil {
+		return big.NewInt(0).SetBytes(ip.To4())
+	} else {
+		return big.NewInt(0).SetBytes(ip.To16())
+	}
+}
+
+func IntToIP(ipInt *big.Int) net.IP {
+	ip := net.IP(ipInt.Bytes())
+	return ip
+}
+
+func IncrementIP(ip net.IP, increment int64) net.IP {
+	sum := big.NewInt(0).Add(IPToInt(ip), big.NewInt(increment))
+	return IntToIP(sum)
+}
+
+func IPToOrdinal(ip net.IP, b AllocationBlock) int64 {
+	ip_int := IPToInt(ip)
+	base_int := IPToInt(b.Cidr.IP)
+	ord := big.NewInt(0).Sub(ip_int, base_int).Int64()
+	if ord < 0 || ord >= BLOCK_SIZE {
+		// IP address not in the given block.
+		log.Fatalf("IP %s not in block %s", ip, b.Cidr)
+	}
+	return ord
+}
+
+func OrdinalToIP(ord int64, b AllocationBlock) net.IP {
+	sum := big.NewInt(0).Add(IPToInt(b.Cidr.IP), big.NewInt(ord))
+	return IntToIP(sum)
 }
