@@ -7,7 +7,7 @@ import (
 )
 
 type AllocationHandle struct {
-	HandleId string           `json:"id"`
+	HandleID string           `json:"id"`
 	Block    map[string]int64 `json:"block"`
 	DbResult string           `json:"-"`
 }
@@ -28,12 +28,12 @@ func (h AllocationHandle) DecrementBlock(blockCidr net.IPNet, num int64) (*int64
 	blockId := blockCidr.String()
 	if current, ok := h.Block[blockId]; !ok {
 		// This entry doesn't exist.
-		errStr := fmt.Sprintf("Tried to decrement block %s by %s but it isn't linked to handle %s", blockId, num, h.HandleId)
+		errStr := fmt.Sprintf("Tried to decrement block %s by %s but it isn't linked to handle %s", blockId, num, h.HandleID)
 		return nil, errors.New(errStr)
 	} else {
 		newNum := current - num
 		if newNum < 0 {
-			errStr := fmt.Sprintf("Tried to decrement block %s by %s but it only has %s addresses on handle %s", blockId, num, current, h.HandleId)
+			errStr := fmt.Sprintf("Tried to decrement block %s by %s but it only has %s addresses on handle %s", blockId, num, current, h.HandleID)
 			return nil, errors.New(errStr)
 		}
 

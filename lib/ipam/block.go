@@ -45,7 +45,7 @@ type AllocationBlock struct {
 }
 
 type AllocationAttribute struct {
-	AttrPrimary   string            `json:"handle_id"`
+	AttrPrimary   *string           `json:"handle_id"`
 	AttrSecondary map[string]string `json:"secondary"`
 }
 
@@ -97,7 +97,7 @@ func OrdinalToIP(ord int64, b AllocationBlock) net.IP {
 }
 
 func (b *AllocationBlock) AutoAssign(
-	num int64, handleID string, host string, attrs map[string]string, affinityCheck bool) ([]net.IP, error) {
+	num int64, handleID *string, host string, attrs map[string]string, affinityCheck bool) ([]net.IP, error) {
 
 	// Determine if we need to check for affinity.
 	checkAffinity := b.StrictAffinity || affinityCheck
@@ -124,7 +124,7 @@ func (b *AllocationBlock) AutoAssign(
 	return ips, nil
 }
 
-func (b *AllocationBlock) Assign(address net.IP, handleID string, attrs map[string]string, host string) error {
+func (b *AllocationBlock) Assign(address net.IP, handleID *string, attrs map[string]string, host string) error {
 	if b.StrictAffinity && host != b.HostAffinity {
 		// Affinity check is enabled but the host does not match - error.
 		return errors.New("Block host affinity does not match")
@@ -187,6 +187,7 @@ func (b *AllocationBlock) Release(addresses []net.IP) ([]net.IP, map[string]int6
 		if attrIdx == nil {
 			log.Println("Asked to release address that was not allocated")
 			unallocated = append(unallocated, ip)
+			continue
 		}
 		ordinals = append(ordinals, ordinal)
 
@@ -197,14 +198,17 @@ func (b *AllocationBlock) Release(addresses []net.IP) ([]net.IP, map[string]int6
 		}
 		delRefCounts[*attrIdx] = cnt
 
-		// Increment count of addresses by handle.
+		// Increment count of addresses by handle if a handle
+		// exists.
 		handleID := b.Attributes[*attrIdx].AttrPrimary
-		handleCount := int64(0)
-		if count, ok := countByHandle[handleID]; !ok {
-			handleCount = count
+		if handleID != nil {
+			handleCount := int64(0)
+			if count, ok := countByHandle[*handleID]; !ok {
+				handleCount = count
+			}
+			handleCount += 1
+			countByHandle[*handleID] = handleCount
 		}
-		handleCount += 1
-		countByHandle[handleID] = handleCount
 	}
 
 	// Handle cleaning up of attributes.  We do this by
@@ -277,7 +281,7 @@ func (b AllocationBlock) attributeRefCounts() map[int64]int {
 func (b AllocationBlock) attributeIndexesByHandle(handleID string) []int64 {
 	indexes := []int64{}
 	for i, attr := range b.Attributes {
-		if attr.AttrPrimary == handleID {
+		if attr.AttrPrimary != nil && *attr.AttrPrimary == handleID {
 			indexes = append(indexes, int64(i))
 		}
 	}
@@ -343,7 +347,7 @@ func (b AllocationBlock) AttributesForIP(ip net.IP) (*AllocationAttribute, error
 	return &b.Attributes[*attrIndex], nil
 }
 
-func (b *AllocationBlock) FindOrAddAttribute(handleID string, attrs map[string]string) int64 {
+func (b *AllocationBlock) FindOrAddAttribute(handleID *string, attrs map[string]string) int64 {
 	attr := AllocationAttribute{handleID, attrs}
 	for idx, existing := range b.Attributes {
 		if reflect.DeepEqual(attr, existing) {
