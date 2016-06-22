@@ -7,12 +7,12 @@ import (
 )
 
 type AllocationHandle struct {
-	HandleID string           `json:"id"`
-	Block    map[string]int64 `json:"block"`
-	DbResult string           `json:"-"`
+	HandleID string         `json:"id"`
+	Block    map[string]int `json:"block"`
+	DbResult string         `json:"-"`
 }
 
-func (h AllocationHandle) IncrementBlock(blockCidr net.IPNet, num int64) int64 {
+func (h AllocationHandle) IncrementBlock(blockCidr net.IPNet, num int) int {
 	blockId := blockCidr.String()
 	newNum := num
 	if val, ok := h.Block[blockId]; ok {
@@ -24,7 +24,7 @@ func (h AllocationHandle) IncrementBlock(blockCidr net.IPNet, num int64) int64 {
 	return newNum
 }
 
-func (h AllocationHandle) DecrementBlock(blockCidr net.IPNet, num int64) (*int64, error) {
+func (h AllocationHandle) DecrementBlock(blockCidr net.IPNet, num int) (*int, error) {
 	blockId := blockCidr.String()
 	if current, ok := h.Block[blockId]; !ok {
 		// This entry doesn't exist.

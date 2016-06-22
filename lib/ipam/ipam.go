@@ -7,7 +7,6 @@ import (
 	"github.com/coreos/etcd/client"
 	"golang.org/x/net/context"
 	"log"
-	"math"
 	"net"
 	"os"
 	"strings"
@@ -90,7 +89,7 @@ func (c IPAMClient) autoAssign(num int, handleID *string, attrs map[string]strin
 		}
 		cidr := affBlocks[0]
 		affBlocks = affBlocks[1:]
-		ips, _ = c.assignFromExistingBlock(cidr, int64(num), handleID, attrs, host, nil)
+		ips, _ = c.assignFromExistingBlock(cidr, num, handleID, attrs, host, nil)
 		log.Println("Block provided addresses:", ips)
 	}
 
@@ -119,7 +118,7 @@ func (c IPAMClient) autoAssign(num int, handleID *string, attrs map[string]strin
 			} else {
 				// Claim successful.  Assign addresses from the new block.
 				log.Println("Claimed new block - assigning addresses")
-				newIPs, err := c.assignFromExistingBlock(*b, int64(rem), handleID, attrs, host, &config.StrictAffinity)
+				newIPs, err := c.assignFromExistingBlock(*b, rem, handleID, attrs, host, &config.StrictAffinity)
 				if err != nil {
 					log.Println("Error assigning IPs:", err)
 					break
@@ -198,7 +197,7 @@ func (c IPAMClient) AssignIP(args AssignIPArgs) error {
 
 		// Increment handle.
 		if args.HandleID != nil {
-			c.incrementHandle(*args.HandleID, blockCidr, int64(1))
+			c.incrementHandle(*args.HandleID, blockCidr, 1)
 		}
 
 		// Update the block.
@@ -206,7 +205,7 @@ func (c IPAMClient) AssignIP(args AssignIPArgs) error {
 		if err != nil {
 			log.Println("CAS failed on block %s", block.Cidr)
 			if args.HandleID != nil {
-				c.decrementHandle(*args.HandleID, blockCidr, int64(1))
+				c.decrementHandle(*args.HandleID, blockCidr, 1)
 			}
 			return err
 		}
@@ -282,7 +281,7 @@ func (c IPAMClient) releaseIPsFromBlock(ips []net.IP, blockCidr net.IPNet) ([]ne
 }
 
 func (c IPAMClient) assignFromExistingBlock(
-	blockCidr net.IPNet, num int64, handleID *string, attrs map[string]string, host string, affCheck *bool) ([]net.IP, error) {
+	blockCidr net.IPNet, num int, handleID *string, attrs map[string]string, host string, affCheck *bool) ([]net.IP, error) {
 	// Limit number of retries.
 	var ips []net.IP
 	for i := 0; i < RETRIES; i++ {
@@ -585,7 +584,7 @@ func (c IPAMClient) readHandle(handleID string) (*AllocationHandle, error) {
 	return &h, nil
 }
 
-func (c IPAMClient) incrementHandle(handleID string, blockCidr net.IPNet, num int64) error {
+func (c IPAMClient) incrementHandle(handleID string, blockCidr net.IPNet, num int) error {
 	for i := 0; i < RETRIES; i++ {
 		handle, err := c.readHandle(handleID)
 		if err != nil {
@@ -594,7 +593,7 @@ func (c IPAMClient) incrementHandle(handleID string, blockCidr net.IPNet, num in
 				log.Println("Creating new handle:", handleID)
 				handle = &AllocationHandle{
 					HandleID: handleID,
-					Block:    map[string]int64{},
+					Block:    map[string]int{},
 				}
 			} else {
 				// Unexpected error reading handle.
@@ -614,7 +613,7 @@ func (c IPAMClient) incrementHandle(handleID string, blockCidr net.IPNet, num in
 
 }
 
-func (c IPAMClient) decrementHandle(handleID string, blockCidr net.IPNet, num int64) error {
+func (c IPAMClient) decrementHandle(handleID string, blockCidr net.IPNet, num int) error {
 	for i := 0; i < RETRIES; i++ {
 		handle, err := c.readHandle(handleID)
 		if err != nil {
@@ -1008,10 +1007,9 @@ func Blocks(pool net.IPNet) []net.IPNet {
 	ipVersion := GetIPVersion(pool.IP)
 	nets := []net.IPNet{}
 	ip := pool.IP
-	size := int64(math.Exp2(float64(ipVersion.TotalBits - ipVersion.BlockPrefixLength)))
 	for pool.Contains(ip) {
 		nets = append(nets, net.IPNet{ip, ipVersion.BlockPrefixMask})
-		ip = IncrementIP(ip, size)
+		ip = IncrementIP(ip, BLOCK_SIZE)
 	}
 	return nets
 }

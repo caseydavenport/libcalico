@@ -39,8 +39,8 @@ type AllocationBlock struct {
 	DbResult       string                `json:"-"`
 	HostAffinity   *string               `json:"hostAffinity"`
 	StrictAffinity bool                  `json:"strictAffinity"`
-	Allocations    []*int64              `json:"allocations"`
-	Unallocated    []int64               `json:"unallocated"`
+	Allocations    []*int                `json:"allocations"`
+	Unallocated    []int                 `json:"unallocated"`
 	Attributes     []AllocationAttribute `json:"attributes"`
 }
 
@@ -51,21 +51,21 @@ type AllocationAttribute struct {
 
 func NewBlock(cidr net.IPNet) AllocationBlock {
 	b := AllocationBlock{}
-	b.Allocations = make([]*int64, BLOCK_SIZE)
-	b.Unallocated = make([]int64, BLOCK_SIZE)
+	b.Allocations = make([]*int, BLOCK_SIZE)
+	b.Unallocated = make([]int, BLOCK_SIZE)
 	b.StrictAffinity = false
 	b.Cidr = cidr
 
 	// Initialize unallocated ordinals.
 	for i := 0; i < BLOCK_SIZE; i++ {
-		b.Unallocated[i] = int64(i)
+		b.Unallocated[i] = i
 	}
 
 	return b
 }
 
 func (b *AllocationBlock) AutoAssign(
-	num int64, handleID *string, host string, attrs map[string]string, affinityCheck bool) ([]net.IP, error) {
+	num int, handleID *string, host string, attrs map[string]string, affinityCheck bool) ([]net.IP, error) {
 
 	// Determine if we need to check for affinity.
 	checkAffinity := b.StrictAffinity || affinityCheck
@@ -76,8 +76,8 @@ func (b *AllocationBlock) AutoAssign(
 	}
 
 	// Walk the allocations until we find enough addresses.
-	ordinals := []int64{}
-	for len(b.Unallocated) > 0 && int64(len(ordinals)) < num {
+	ordinals := []int{}
+	for len(b.Unallocated) > 0 && len(ordinals) < num {
 		ordinals = append(ordinals, b.Unallocated[0])
 		b.Unallocated = b.Unallocated[1:]
 	}
@@ -123,23 +123,23 @@ func (b *AllocationBlock) Assign(address net.IP, handleID *string, attrs map[str
 	return nil
 }
 
-func (b AllocationBlock) NumFreeAddresses() int64 {
-	return int64(len(b.Unallocated))
+func (b AllocationBlock) NumFreeAddresses() int {
+	return len(b.Unallocated)
 }
 
 func (b AllocationBlock) Empty() bool {
 	return b.NumFreeAddresses() == BLOCK_SIZE
 }
 
-func (b *AllocationBlock) Release(addresses []net.IP) ([]net.IP, map[string]int64, error) {
+func (b *AllocationBlock) Release(addresses []net.IP) ([]net.IP, map[string]int, error) {
 	// Store return values.
 	unallocated := []net.IP{}
-	countByHandle := map[string]int64{}
+	countByHandle := map[string]int{}
 
 	// Used internally.
-	var ordinals []int64
-	delRefCounts := map[int64]int{}
-	attrsToDelete := []int64{}
+	var ordinals []int
+	delRefCounts := map[int]int{}
+	attrsToDelete := []int{}
 
 	// Determine the ordinals that need to be released and the
 	// attributes that need to be cleaned up.
@@ -170,7 +170,7 @@ func (b *AllocationBlock) Release(addresses []net.IP) ([]net.IP, map[string]int6
 		// exists.
 		handleID := b.Attributes[*attrIdx].AttrPrimary
 		if handleID != nil {
-			handleCount := int64(0)
+			handleCount := 0
 			if count, ok := countByHandle[*handleID]; !ok {
 				handleCount = count
 			}
@@ -201,12 +201,12 @@ func (b *AllocationBlock) Release(addresses []net.IP) ([]net.IP, map[string]int6
 	return unallocated, countByHandle, nil
 }
 
-func (b *AllocationBlock) deleteAttributes(delIndexes, ordinals []int64) {
-	newIndexes := make([]*int64, len(b.Attributes))
+func (b *AllocationBlock) deleteAttributes(delIndexes, ordinals []int) {
+	newIndexes := make([]*int, len(b.Attributes))
 	newAttrs := []AllocationAttribute{}
-	y := int64(0) // Next free slot in the new attributes list.
+	y := 0 // Next free slot in the new attributes list.
 	for x := range b.Attributes {
-		if !IntInSlice(int64(x), delIndexes) {
+		if !IntInSlice(x, delIndexes) {
 			log.Printf("%d in %s", x, delIndexes)
 			// Attribute at x is not being deleted.  Build a mapping
 			// of old attribute index (x) to new attribute index (y).
@@ -229,8 +229,8 @@ func (b *AllocationBlock) deleteAttributes(delIndexes, ordinals []int64) {
 	}
 }
 
-func (b AllocationBlock) attributeRefCounts() map[int64]int {
-	refCounts := map[int64]int{}
+func (b AllocationBlock) attributeRefCounts() map[int]int {
+	refCounts := map[int]int{}
 	for _, a := range b.Allocations {
 		if a == nil {
 			continue
@@ -246,17 +246,17 @@ func (b AllocationBlock) attributeRefCounts() map[int64]int {
 	return refCounts
 }
 
-func (b AllocationBlock) attributeIndexesByHandle(handleID string) []int64 {
-	indexes := []int64{}
+func (b AllocationBlock) attributeIndexesByHandle(handleID string) []int {
+	indexes := []int{}
 	for i, attr := range b.Attributes {
 		if attr.AttrPrimary != nil && *attr.AttrPrimary == handleID {
-			indexes = append(indexes, int64(i))
+			indexes = append(indexes, i)
 		}
 	}
 	return indexes
 }
 
-func (b *AllocationBlock) ReleaseByHandle(handleID string) int64 {
+func (b *AllocationBlock) ReleaseByHandle(handleID string) int {
 	attrIndexes := b.attributeIndexesByHandle(handleID)
 	log.Println("Attribute indexes to release:", attrIndexes)
 	if len(attrIndexes) == 0 {
@@ -266,8 +266,8 @@ func (b *AllocationBlock) ReleaseByHandle(handleID string) int64 {
 	}
 
 	// There are addresses to release.
-	ordinals := []int64{}
-	var o int64
+	ordinals := []int{}
+	var o int
 	for o = 0; o < BLOCK_SIZE; o++ {
 		// Only check allocated ordinals.
 		if b.Allocations[o] != nil && IntInSlice(*b.Allocations[o], attrIndexes) {
@@ -284,13 +284,13 @@ func (b *AllocationBlock) ReleaseByHandle(handleID string) int64 {
 		b.Allocations[o] = nil
 		b.Unallocated = append(b.Unallocated, o)
 	}
-	return int64(len(ordinals))
+	return len(ordinals)
 }
 
 func (b AllocationBlock) IPsByHandle(handleID string) []net.IP {
 	ips := []net.IP{}
 	attrIndexes := b.attributeIndexesByHandle(handleID)
-	var o int64
+	var o int
 	for o = 0; o < BLOCK_SIZE; o++ {
 		if IntInSlice(*b.Allocations[o], attrIndexes) {
 			ip := OrdinalToIP(o, b)
@@ -315,12 +315,12 @@ func (b AllocationBlock) AttributesForIP(ip net.IP) (*AllocationAttribute, error
 	return &b.Attributes[*attrIndex], nil
 }
 
-func (b *AllocationBlock) FindOrAddAttribute(handleID *string, attrs map[string]string) int64 {
+func (b *AllocationBlock) FindOrAddAttribute(handleID *string, attrs map[string]string) int {
 	attr := AllocationAttribute{handleID, attrs}
 	for idx, existing := range b.Attributes {
 		if reflect.DeepEqual(attr, existing) {
 			log.Println("Attribute already exists")
-			return int64(idx)
+			return idx
 		}
 	}
 
@@ -328,7 +328,7 @@ func (b *AllocationBlock) FindOrAddAttribute(handleID *string, attrs map[string]
 	log.Println("New attribute", attr)
 	attrIndex := len(b.Attributes)
 	b.Attributes = append(b.Attributes, attr)
-	return int64(attrIndex)
+	return attrIndex
 }
 
 func GetBlockCIDRForAddress(addr net.IP) net.IPNet {
@@ -358,7 +358,7 @@ func LargerThanBlock(blockCidr net.IPNet) bool {
 	return prefixLength < ipVersion.BlockPrefixLength
 }
 
-func IntInSlice(searchInt int64, slice []int64) bool {
+func IntInSlice(searchInt int, slice []int) bool {
 	for _, v := range slice {
 		if v == searchInt {
 			return true
@@ -380,12 +380,12 @@ func IntToIP(ipInt *big.Int) net.IP {
 	return ip
 }
 
-func IncrementIP(ip net.IP, increment int64) net.IP {
-	sum := big.NewInt(0).Add(IPToInt(ip), big.NewInt(increment))
+func IncrementIP(ip net.IP, increment int) net.IP {
+	sum := big.NewInt(0).Add(IPToInt(ip), big.NewInt(int64(increment)))
 	return IntToIP(sum)
 }
 
-func IPToOrdinal(ip net.IP, b AllocationBlock) int64 {
+func IPToOrdinal(ip net.IP, b AllocationBlock) int {
 	ip_int := IPToInt(ip)
 	base_int := IPToInt(b.Cidr.IP)
 	ord := big.NewInt(0).Sub(ip_int, base_int).Int64()
@@ -393,10 +393,10 @@ func IPToOrdinal(ip net.IP, b AllocationBlock) int64 {
 		// IP address not in the given block.
 		log.Fatalf("IP %s not in block %s", ip, b.Cidr)
 	}
-	return ord
+	return int(ord)
 }
 
-func OrdinalToIP(ord int64, b AllocationBlock) net.IP {
-	sum := big.NewInt(0).Add(IPToInt(b.Cidr.IP), big.NewInt(ord))
+func OrdinalToIP(ord int, b AllocationBlock) net.IP {
+	sum := big.NewInt(0).Add(IPToInt(b.Cidr.IP), big.NewInt(int64(ord)))
 	return IntToIP(sum)
 }
