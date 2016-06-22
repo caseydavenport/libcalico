@@ -351,11 +351,11 @@ func GetIPVersion(ip net.IP) IPVersion {
 	return IPv4
 }
 
-func ValidateBlockSize(blockCidr net.IPNet) bool {
+func LargerThanBlock(blockCidr net.IPNet) bool {
 	ones, bits := blockCidr.Mask.Size()
 	prefixLength := bits - ones
 	ipVersion := GetIPVersion(blockCidr.IP)
-	return prefixLength > ipVersion.BlockPrefixLength
+	return prefixLength < ipVersion.BlockPrefixLength
 }
 
 func IntInSlice(searchInt int64, slice []int64) bool {
